@@ -4,6 +4,11 @@ import fetch from "node-fetch";
 const app = express();
 app.use(express.json());
 
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`);
+  next();
+});
+
 app.post("/api/predict", async (req, res) => {
   const { prompt } = req.body;
 
