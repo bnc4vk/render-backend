@@ -10,7 +10,9 @@ app.use((req, res, next) => {
 });
 
 app.post("/api/predict", async (req, res) => {
+  console.log("POST /api/predict hit");
   const { prompt } = req.body;
+  console.log("Prompt:", prompt);
 
   try {
     const response = await fetch("https://api-inference.huggingface.co/models/gpt2", {
