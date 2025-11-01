@@ -23,11 +23,7 @@ app.post("/api/predict", async (req, res) => {
   try {
     const output = await hf.textClassification({
       model: "distilbert-base-uncased-finetuned-sst-2-english",
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 50,
-        temperature: 0.7
-      }
+      inputs: prompt
     });
 
     console.log("✅ HF SDK call succeeded");
