@@ -21,7 +21,7 @@ app.post("/api/predict", async (req, res) => {
   console.log("POST /api/predict hit with prompt:", prompt);
 
   try {
-    const output = await hf.textGeneration({
+    const output = await hf.textClassification({
       model: "distilbert-base-uncased-finetuned-sst-2-english",
       inputs: prompt,
       parameters: {
