@@ -1,66 +1,44 @@
 import express from "express";
-import fetch from "node-fetch";
+import { HfInference } from "@huggingface/inference";
 
 const app = express();
 app.use(express.json());
 
-// ✅ Log all incoming requests
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.path}`);
-  next();
-});
+// Init Hugging Face client
+if (!process.env.HF_API_KEY) {
+  console.error("❌ HF_API_KEY not set in environment");
+}
+const hf = new HfInference(process.env.HF_API_KEY);
 
-// ✅ Health check route
+// Health check route
 app.get("/", (req, res) => {
-  res.send("✅ Render backend is running!");
+  res.send("✅ Render backend is live and using Hugging Face SDK!");
 });
 
-// ✅ Hugging Face proxy route
+// Prediction route
 app.post("/api/predict", async (req, res) => {
-  console.log("POST /api/predict hit");
   const { prompt } = req.body;
-  console.log("Prompt:", prompt);
-
-  // 🧩 Validate environment variable
-  if (!process.env.HF_API_KEY) {
-    console.error("❌ HF_API_KEY is missing in environment");
-    return res.status(500).json({ error: "HF_API_KEY not set on server" });
-  }
+  console.log("POST /api/predict hit with prompt:", prompt);
 
   try {
-    const response = await fetch("https://api-inference.huggingface.co/models/distilbert-base-uncased", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.HF_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ inputs: prompt })
+    const output = await hf.textGeneration({
+      model: "gpt2", // you can replace with any HF model
+      inputs: prompt,
+      parameters: {
+        max_new_tokens: 50,
+        temperature: 0.7
+      }
     });
 
-    const text = await response.text(); // fetch raw response for safety
-    try {
-      const data = JSON.parse(text);
-      console.log("✅ HF response received");
-      res.json(data);
-    } catch (err) {
-      console.error("⚠️ Non-JSON response from HF:", text);
-      res.status(response.status).json({
-        error: "Invalid Hugging Face response",
-        text
-      });
-    }
+    console.log("✅ HF SDK call succeeded");
+    res.json(output);
   } catch (err) {
-    console.error("💥 Request failed:", err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("💥 HF SDK error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ✅ Handle unknown routes
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
-
-// ✅ Start server
+// Start server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
