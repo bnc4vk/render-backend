@@ -22,7 +22,7 @@ app.post("/api/predict", async (req, res) => {
 
   try {
     const output = await hf.textGeneration({
-      model: "gpt2", // you can replace with any HF model
+      model: "distilbert-base-uncased-finetuned-sst-2-english",
       inputs: prompt,
       parameters: {
         max_new_tokens: 50,
