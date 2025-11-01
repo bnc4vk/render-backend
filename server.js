@@ -28,7 +28,7 @@ app.post("/api/predict", async (req, res) => {
   }
 
   try {
-    const response = await fetch("https://api-inference.huggingface.co/models/gpt2", {
+    const response = await fetch("https://api-inference.huggingface.co/models/distilbert-base-uncased", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${process.env.HF_API_KEY}`,
