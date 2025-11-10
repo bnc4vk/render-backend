@@ -7,8 +7,6 @@ import { HfInference } from "@huggingface/inference";
 const app = express();
 
 app.use(cors()); // Modify in the future to restrict to just localhost
-
-const app = express();
 app.use(express.json());
 
 // ✅ Initialize Hugging Face client
