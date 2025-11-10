@@ -102,8 +102,7 @@ Now resolve this input: "${rawQuery}"
 async function checkSupabaseCache(normalizedSubstance) {
   try {
     const response = await fetch(
-      // Query by BOTH canonical_name AND resolved_name to catch either form
-      `${SUPABASE_URL}/rest/v1/psychedelic_access?or=(substance.eq.${encodeURIComponent(normalizedSubstance)})`,
+      `${SUPABASE_URL}/rest/v1/psychedelic_access?substance=eq.${encodeURIComponent(normalizedSubstance)}`,
       {
         headers: {
           apikey: SUPABASE_SERVICE_ROLE_KEY,
@@ -115,22 +114,22 @@ async function checkSupabaseCache(normalizedSubstance) {
 
     if (!response.ok) {
       const text = await response.text();
-      console.error("âŒ Supabase lookup failed:", text);
+      console.error("❌ Supabase lookup failed:", text);
       return { found: false, error: "Failed to query Supabase" };
     }
 
     const results = await response.json();
 
     if (results.length > 0) {
-      console.log(`âœ… ${normalizedSubstance} found in Supabase cache (${results.length} rows)`);
-      return { found: true, data: results, cacheKey: normalizedSubstance };
+      console.log(`✅ ${normalizedSubstance} found in Supabase cache (${results.length} rows)`);
+      return { found: true, data: results };
     }
 
-    console.log(`â„¹ï¸ ${normalizedSubstance} not found in Supabase`);
+    console.log(`ℹ️ ${normalizedSubstance} not found in Supabase`);
     return { found: false, data: [] };
 
   } catch (err) {
-    console.error("ðŸ'¥ Supabase query error:", err);
+    console.error("💥 Supabase query error:", err);
     return { found: false, error: err.message };
   }
 }
@@ -189,6 +188,41 @@ Respond ONLY in strict JSON as an object where keys are ISO 3166-1 alpha-2 codes
   }
 }
 
+async function saveToSupabaseCache(rows) {
+  if (!rows || rows.length === 0) {
+    console.log("â„¹ï¸ No rows to save");
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/psychedelic_access`,
+      {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates", // Upsert behavior
+        },
+        body: JSON.stringify(rows),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("Failed to save to Supabase:", text);
+      return false;
+    }
+
+    console.log(`Saved ${rows.length} rows to Supabase for '${rows[0].substance}'`);
+    return true;
+  } catch (err) {
+    console.error("Supabase save error:", err);
+    return false;
+  }
+}
+
 // 🌐 Health check
 app.get("/", (req, res) => {
   res.send("✅ Render backend is live with Llama 3 resolver!");
@@ -215,7 +249,7 @@ app.post("/api/predict", async (req, res) => {
       });
     }
 
-    const normalizedSubstance = resolverParsed.resolved_name.toLowerCase();
+    const normalizedSubstance = resolverParsed.canonical_name.toLowerCase();
 
     // 2️⃣ Check Supabase cache
     const cacheResult = await checkSupabaseCache(normalizedSubstance);
@@ -235,6 +269,8 @@ app.post("/api/predict", async (req, res) => {
     // 3️⃣ No cache found — query OpenAI for legal status
     console.log(`ℹ️ No Supabase cache found for '${normalizedSubstance}', querying OpenAI...`);
     const legalRows = await getSubstanceLegalStatus(normalizedSubstance, res);
+
+    await saveToSupabaseCache(legalRows);
 
     return res.json({
       success: true,
