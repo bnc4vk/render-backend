@@ -102,7 +102,8 @@ Now resolve this input: "${rawQuery}"
 async function checkSupabaseCache(normalizedSubstance) {
   try {
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/psychedelic_access?substance=eq.${encodeURIComponent(normalizedSubstance)}`,
+      // Query by BOTH canonical_name AND resolved_name to catch either form
+      `${SUPABASE_URL}/rest/v1/psychedelic_access?or=(substance.eq.${encodeURIComponent(normalizedSubstance)})`,
       {
         headers: {
           apikey: SUPABASE_SERVICE_ROLE_KEY,
@@ -114,22 +115,22 @@ async function checkSupabaseCache(normalizedSubstance) {
 
     if (!response.ok) {
       const text = await response.text();
-      console.error("❌ Supabase lookup failed:", text);
+      console.error("âŒ Supabase lookup failed:", text);
       return { found: false, error: "Failed to query Supabase" };
     }
 
     const results = await response.json();
 
     if (results.length > 0) {
-      console.log(`✅ ${normalizedSubstance} found in Supabase cache (${results.length} rows)`);
-      return { found: true, data: results };
+      console.log(`âœ… ${normalizedSubstance} found in Supabase cache (${results.length} rows)`);
+      return { found: true, data: results, cacheKey: normalizedSubstance };
     }
 
-    console.log(`ℹ️ ${normalizedSubstance} not found in Supabase`);
+    console.log(`â„¹ï¸ ${normalizedSubstance} not found in Supabase`);
     return { found: false, data: [] };
 
   } catch (err) {
-    console.error("💥 Supabase query error:", err);
+    console.error("ðŸ'¥ Supabase query error:", err);
     return { found: false, error: err.message };
   }
 }
