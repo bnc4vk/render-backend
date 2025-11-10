@@ -1,7 +1,12 @@
 import 'dotenv/config';
+import cors from "cors";
 import express from "express";
 import OpenAI from "openai";
 import { HfInference } from "@huggingface/inference";
+
+const app = express();
+
+app.use(cors()); // Modify in the future to restrict to just localhost
 
 const app = express();
 app.use(express.json());
