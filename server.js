@@ -42,6 +42,16 @@ const ALL_COUNTRIES = [
   "VN","YE","ZM","ZW"
 ];
 
+// ✅ Utility to safely parse JSON from AI responses
+function safeParseJSON(raw, fallback) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("⚠️ Failed to parse JSON:", raw);
+    return fallback;
+  }
+}
+
 // 🧠 Core function — llama3 resolver
 async function llama3Resolve(rawQuery) {
   const response = await hf.chatCompletion({
@@ -66,7 +76,7 @@ Rules:
      - This may be a longer form, but avoid casual nicknames.
 
 2. If you cannot confidently resolve the input, return:
-   {"resolved_name": null, "message": "No known record of '<user_input>'"}
+{"resolved_name": null, "message": "No known record of '<user_input>'"}
 
 3. JSON only. No text before or after.
 
@@ -89,14 +99,7 @@ Now resolve this input: "${rawQuery}"
   });
 
   const raw = response.choices?.[0]?.message?.content?.trim();
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.error("⚠️ Failed to parse llama3 output:", raw);
-    parsed = { resolved_name: null, message: `No known record of '${rawQuery}'` };
-  }
-  return parsed;
+  return safeParseJSON(raw, { resolved_name: null, message: `No known record of '${rawQuery}'` });
 }
 
 async function checkSupabaseCache(normalizedSubstance) {
@@ -163,14 +166,8 @@ Respond ONLY in strict JSON as an object where keys are ISO 3166-1 alpha-2 codes
     const raw = completion.choices[0]?.message?.content?.trim();
     if (!raw) throw new Error("Empty response from OpenAI");
 
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("Failed to parse OpenAI output:", raw);
-      throw new Error("Failed to parse OpenAI output");
-    }
-
+    const parsed = safeParseJSON(raw, {});
+    
     // Transform parsed JSON into rows ready for Supabase
     const rows = Object.entries(parsed)
       .filter(([code]) => /^[A-Z]{2}$/.test(code))
