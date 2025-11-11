@@ -246,7 +246,7 @@ app.post("/api/predict", async (req, res) => {
       });
     }
 
-    const normalizedSubstance = resolverParsed.canonical_name.toLowerCase();
+    const normalizedSubstance = resolverParsed.resolved_name.toLowerCase();
 
     // 2️⃣ Check Supabase cache
     const cacheResult = await checkSupabaseCache(normalizedSubstance);
