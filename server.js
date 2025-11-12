@@ -9,7 +9,6 @@ const app = express();
 app.use(cors()); // Modify in the future to restrict to just localhost
 app.use(express.json());
 
-// ✅ Initialize Hugging Face client
 if (!process.env.HUGGING_FACE_READ_KEY) {
   console.error("❌ HUGGING_FACE_READ_KEY not set in environment");
 }
@@ -42,7 +41,6 @@ const ALL_COUNTRIES = [
   "VN","YE","ZM","ZW"
 ];
 
-// ✅ Utility to safely parse JSON from AI responses
 function safeParseJSON(raw, fallback) {
   try {
     return JSON.parse(raw);
@@ -52,7 +50,28 @@ function safeParseJSON(raw, fallback) {
   }
 }
 
-// 🧠 Core function — llama3 resolver
+async function supabaseRequest(path, options = {}) {
+  const url = `${SUPABASE_URL}/rest/v1/${path}`;
+  const defaultHeaders = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+  };
+
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...defaultHeaders, ...(options.headers || {}) },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Supabase request failed: ${text}`);
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
 async function llama3Resolve(rawQuery) {
   const response = await hf.chatCompletion({
     model: "meta-llama/Meta-Llama-3-70B-Instruct",
@@ -104,24 +123,9 @@ Now resolve this input: "${rawQuery}"
 
 async function checkSupabaseCache(normalizedSubstance) {
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/psychedelic_access?substance=eq.${encodeURIComponent(normalizedSubstance)}`,
-      {
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
+    const results = await supabaseRequest(
+      `psychedelic_access?substance=eq.${encodeURIComponent(normalizedSubstance)}`
     );
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("❌ Supabase lookup failed:", text);
-      return { found: false, error: "Failed to query Supabase" };
-    }
-
-    const results = await response.json();
 
     if (results.length > 0) {
       console.log(`✅ ${normalizedSubstance} found in Supabase cache (${results.length} rows)`);
@@ -130,14 +134,36 @@ async function checkSupabaseCache(normalizedSubstance) {
 
     console.log(`ℹ️ ${normalizedSubstance} not found in Supabase`);
     return { found: false, data: [] };
-
   } catch (err) {
-    console.error("💥 Supabase query error:", err);
+    console.error("💥 Supabase lookup error:", err);
     return { found: false, error: err.message };
   }
 }
 
-async function getSubstanceLegalStatus(normalizedSubstance, res) {
+async function saveToSupabaseCache(rows) {
+  if (!rows || rows.length === 0) {
+    console.log("ℹ️ No rows to save");
+    return;
+  }
+
+  try {
+    await supabaseRequest("psychedelic_access", {
+      method: "POST",
+      headers: {
+        Prefer: "resolution=merge-duplicates", // Upsert behavior
+      },
+      body: JSON.stringify(rows),
+    });
+
+    console.log(`Saved ${rows.length} rows to Supabase for '${rows[0].substance}'`);
+    return true;
+  } catch (err) {
+    console.error("Supabase save error:", err);
+    return false;
+  }
+}
+
+async function getSubstanceLegalStatus(normalizedSubstance) {
   if (!normalizedSubstance) throw new Error("Missing normalizedSubstance");
 
   const prompt = `For the substance "${normalizedSubstance}", determine its current legal or medical access status in the following countries:
@@ -154,10 +180,7 @@ Respond ONLY in strict JSON as an object where keys are ISO 3166-1 alpha-2 codes
       model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content: "You are a precise legal/medical data provider. Always output valid JSON only.",
-        },
+        { role: "system", content: "You are a precise legal/medical data provider. Always output valid JSON only." },
         { role: "user", content: prompt },
       ],
       temperature: 0,
@@ -185,99 +208,61 @@ Respond ONLY in strict JSON as an object where keys are ISO 3166-1 alpha-2 codes
   }
 }
 
-async function saveToSupabaseCache(rows) {
-  if (!rows || rows.length === 0) {
-    console.log("â„¹ï¸ No rows to save");
-    return;
-  }
-
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/psychedelic_access`,
-      {
-        method: "POST",
-        headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-          "Content-Type": "application/json",
-          Prefer: "resolution=merge-duplicates", // Upsert behavior
-        },
-        body: JSON.stringify(rows),
-      }
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("Failed to save to Supabase:", text);
-      return false;
-    }
-
-    console.log(`Saved ${rows.length} rows to Supabase for '${rows[0].substance}'`);
-    return true;
-  } catch (err) {
-    console.error("Supabase save error:", err);
-    return false;
-  }
-}
-
 // 🌐 Health check
 app.get("/", (req, res) => {
   res.send("✅ Render backend is live with Llama 3 resolver!");
 });
 
 // 🔮 Prediction route
-app.post("/api/predict", async (req, res) => {
-  const { prompt } = req.body;
-  console.log("POST /api/predict hit with prompt:", prompt);
-
-  if (!prompt) {
-    return res.status(400).json({ error: "Missing 'prompt' field in request body" });
+async function processSubstanceQuery(prompt) {
+  // 1️⃣ Resolve substance using Llama3
+  const resolverParsed = await llama3Resolve(prompt);
+  if (!resolverParsed.resolved_name) {
+    return { success: false, message: resolverParsed.message };
   }
 
-  try {
-    // 1️⃣ Resolve substance using Llama3
-    const resolverParsed = await llama3Resolve(prompt);
-    console.log("✅ Llama3 resolved:", resolverParsed);
+  const normalizedSubstance = resolverParsed.resolved_name.toLowerCase();
+  console.log(`Normalized user prompt '${prompt}' to: ${normalizedSubstance}`);
 
-    if (!resolverParsed.resolved_name) {
-      return res.status(404).json({
-        success: false,
-        message: resolverParsed.message || `Could not resolve '${prompt}'`,
-      });
-    }
-
-    const normalizedSubstance = resolverParsed.resolved_name.toLowerCase();
-
-    // 2️⃣ Check Supabase cache
-    const cacheResult = await checkSupabaseCache(normalizedSubstance);
-
-    if (cacheResult.found) {
-      return res.json({
-        success: true,
-        source: "cache",
-        rows: cacheResult.data.length,
-        normalizedSubstance,
-        resolved_name: resolverParsed.resolved_name,
-        canonical_name: resolverParsed.canonical_name || null,
-        data: cacheResult.data,
-      });
-    }
-
-    // 3️⃣ No cache found — query OpenAI for legal status
-    console.log(`ℹ️ No Supabase cache found for '${normalizedSubstance}', querying OpenAI...`);
-    const legalRows = await getSubstanceLegalStatus(normalizedSubstance, res);
-
-    await saveToSupabaseCache(legalRows);
-
-    return res.json({
+  // 2️⃣ Check Supabase cache
+  const cacheResult = await checkSupabaseCache(normalizedSubstance);
+  if (cacheResult.found) {
+    return {
       success: true,
-      source: "openai",
+      source: "cache",
+      data: cacheResult.data,
       normalizedSubstance,
       resolved_name: resolverParsed.resolved_name,
       canonical_name: resolverParsed.canonical_name || null,
-      data: legalRows,
-    });
+    };
+  }
 
+  console.log(`Using gpt-4o-mini to fetch legality data for: ${normalizedSubstance}`);
+  // 3️⃣ No cache found — query OpenAI for legal status
+  const legalRows = await getSubstanceLegalStatus(normalizedSubstance);
+  await saveToSupabaseCache(legalRows);
+
+  return {
+    success: true,
+    source: "openai",
+    data: legalRows,
+    normalizedSubstance,
+    resolved_name: resolverParsed.resolved_name,
+    canonical_name: resolverParsed.canonical_name || null,
+  };
+}
+
+app.post("/api/predict", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+
+    const result = await processSubstanceQuery(prompt);
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+
+    res.json(result);
   } catch (err) {
     console.error("💥 /api/predict error:", err);
     res.status(500).json({ error: err.message });
